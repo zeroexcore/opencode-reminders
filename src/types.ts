@@ -9,6 +9,7 @@ export interface ScheduledTask {
   prompt: string
   priority: Priority
   recurrence?: string // cron-like: "daily 21:30" or interval: "every 24h"
+  silent?: boolean // true = inject without response, false = let agent respond
   status: TaskStatus
   lastError?: string
   forkSessionId?: string // tracks the forked session while running

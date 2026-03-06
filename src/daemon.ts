@@ -138,11 +138,14 @@ async function executeTask(task: ScheduledTask): Promise<void> {
     const summary = extractSummary(result.data)
 
     // Join back to main session
-    console.log(`[daemon] Joining results back to main session...`)
+    // silent=true -> noReply (background task, just inject info)
+    // silent=false -> let agent respond (user-facing task)
+    const shouldBeQuiet = task.silent ?? false
+    console.log(`[daemon] Joining results back to main session (silent=${shouldBeQuiet})...`)
     await client.session.prompt({
       path: { id: task.sessionId },
       body: {
-        noReply: true,
+        noReply: shouldBeQuiet,
         parts: [{
           type: "text",
           text: buildJoinMessage(task, summary)
@@ -159,6 +162,7 @@ async function executeTask(task: ScheduledTask): Promise<void> {
         prompt: task.prompt,
         priority: task.priority,
         recurrence: task.recurrence,
+        silent: task.silent,
       })
       console.log(`[daemon] Scheduled next occurrence: ${new Date(nextTrigger).toISOString()}`)
     }

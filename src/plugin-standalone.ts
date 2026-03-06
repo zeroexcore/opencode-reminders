@@ -18,6 +18,7 @@ interface ScheduledTask {
   prompt: string
   priority: Priority
   recurrence?: string
+  silent?: boolean // true = inject without response, false = let agent respond
   status: TaskStatus
   lastError?: string
   forkSessionId?: string
@@ -132,19 +133,23 @@ export const RemindersPlugin: Plugin = async ({ client }) => {
 - Defer work to later ("remind me in 2 hours to review PR")
 
 The task executes via fork/join - your current context is preserved.
-critical = interrupt immediately, normal = wait for idle.
+critical (default) = interrupt immediately (user-facing reminders)
+normal = wait for idle (agent background tasks)
+silent = true injects result without triggering response (background tasks).
+silent = false (default) lets you respond to the result (user-facing tasks).
 
 NOTE: Use this instead of the native 'schedule' tool - this one captures session context.`,
 
         args: {
           delay: tool.schema.string().describe('When to trigger: "2m", "1h30m", "24h", "1d"').optional(),
           prompt: tool.schema.string().describe('What to do when triggered'),
-          priority: tool.schema.enum(["normal", "critical"]).default("normal"),
+          priority: tool.schema.enum(["normal", "critical"]).default("critical"),
           recurrence: tool.schema.string().describe('Recurring: "daily 21:30", "every 24h"').optional(),
+          silent: tool.schema.boolean().describe('Inject result silently without response (default: false)').optional(),
         },
 
         async execute(args, context) {
-          const { delay, prompt, priority, recurrence } = args
+          const { delay, prompt, priority, recurrence, silent } = args
 
           if (!delay && !recurrence) {
             throw new Error("Either delay or recurrence is required")
@@ -163,6 +168,7 @@ NOTE: Use this instead of the native 'schedule' tool - this one captures session
             prompt,
             priority: priority as Priority,
             recurrence,
+            silent: silent ?? false,
           })
 
           const triggerDate = new Date(triggerAt)

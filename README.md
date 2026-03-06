@@ -46,6 +46,12 @@ Restart OpenCode after install.
 ```
 remind({ delay: "2m", prompt: "Check my email", priority: "normal" })
 remind({ delay: "1h", prompt: "Review PR #123", priority: "critical" })
+
+# silent=false (default) - agent responds to result (user-facing)
+remind({ delay: "1m", prompt: "Tell user a fun fact", silent: false })
+
+# silent=true - inject result without response (background task)
+remind({ delay: "1h", prompt: "Check portfolio", silent: true })
 ```
 
 ### Recurring tasks
@@ -69,10 +75,12 @@ cancel_reminder({ id: "abc12345" })
 
 ## Priority
 
-| Priority | Behavior |
-|----------|----------|
-| `normal` | Waits for session idle |
-| `critical` | Forks immediately |
+| Priority | Behavior | Default |
+|----------|----------|---------|
+| `critical` | Forks immediately (interrupts) | ✓ |
+| `normal` | Waits for session idle | |
+
+User reminders should interrupt. Agent background tasks can use `normal`.
 
 ## Daemon
 
