@@ -1,4 +1,9 @@
-# OpenCode Reminders - Agent Skill
+---
+name: using-opencode-reminders
+description: Self-schedule tasks using fork/join. Use when setting reminders, deferring work, or scheduling recurring agent tasks.
+---
+
+# OpenCode Reminders
 
 Self-scheduling reminder system for OpenCode agents using fork/join to preserve context.
 
