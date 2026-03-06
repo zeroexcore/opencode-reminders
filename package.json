@@ -1,0 +1,20 @@
+{
+  "name": "opencode-reminders",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "bun build ./src/daemon.ts --outdir ./dist --target bun",
+    "daemon": "bun run ./src/daemon.ts",
+    "daemon:once": "bun run ./src/daemon.ts --once",
+    "install:plugin": "bun run ./scripts/install.ts",
+    "test:schedule": "bun run ./src/test-schedule.ts"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "latest",
+    "@opencode-ai/plugin": "latest"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.0.0"
+  }
+}

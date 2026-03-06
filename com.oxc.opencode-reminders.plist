@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.oxc.opencode-reminders</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/runcible/.bun/bin/bun</string>
+        <string>run</string>
+        <string>/Users/runcible/code/oxc/reminders/src/daemon.ts</string>
+    </array>
+    
+    <key>RunAtLoad</key>
+    <true/>
+    
+    <key>KeepAlive</key>
+    <true/>
+    
+    <key>StandardOutPath</key>
+    <string>/tmp/opencode-reminders.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>/tmp/opencode-reminders.err</string>
+    
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/runcible/.bun/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/runcible</string>
+    </dict>
+</dict>
+</plist>
