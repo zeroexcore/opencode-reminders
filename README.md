@@ -93,7 +93,7 @@ launchctl load ~/Library/LaunchAgents/com.oxc.opencode-reminders.plist
 ## Config
 
 - Schedule file: `~/.config/opencode/reminders.json`
-- OpenCode port: 4096 (change in `src/types.ts`)
+- OpenCode port: auto-discovered via `lsof` (no config needed)
 - Poll interval: 30s (change in `src/daemon.ts`)
 
 ## Troubleshooting

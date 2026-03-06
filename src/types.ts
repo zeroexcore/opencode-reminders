@@ -20,5 +20,24 @@ export interface Schedule {
 }
 
 export const SCHEDULE_PATH = `${process.env.HOME}/.config/opencode/reminders.json`
-export const OPENCODE_PORT = 4096
 export const OPENCODE_HOST = "http://127.0.0.1"
+
+// Port discovery - find which port opencode is listening on
+export async function discoverOpencodePort(): Promise<number | null> {
+  try {
+    const proc = Bun.spawn(["lsof", "-c", "opencode", "-i", "-sTCP:LISTEN", "-nP"], {
+      stdout: "pipe",
+      stderr: "ignore",
+    })
+    const output = await new Response(proc.stdout).text()
+    
+    // Parse: opencode 7365 user 23u IPv4 ... TCP 127.0.0.1:4096 (LISTEN)
+    for (const line of output.split("\n")) {
+      if (line.includes("opencode") && line.includes("LISTEN")) {
+        const match = line.match(/:(\d+)\s+\(LISTEN\)/)
+        if (match) return parseInt(match[1], 10)
+      }
+    }
+  } catch {}
+  return null
+}

@@ -17,16 +17,32 @@ import {
   getNextTriggerTime,
   readSchedule 
 } from "./schedule"
-import { OPENCODE_HOST, OPENCODE_PORT, type ScheduledTask } from "./types"
+import { OPENCODE_HOST, discoverOpencodePort, type ScheduledTask } from "./types"
 
 const POLL_INTERVAL = 30_000 // 30 seconds
 const ONCE_MODE = process.argv.includes("--once")
 
+// Cache discovered port (won't change during daemon lifetime)
+let cachedPort: number | null = null
+
+async function getOpencodePort(): Promise<number | null> {
+  if (cachedPort) return cachedPort
+  cachedPort = await discoverOpencodePort()
+  if (cachedPort) {
+    console.log(`[daemon] Discovered OpenCode on port ${cachedPort}`)
+  }
+  return cachedPort
+}
+
 async function isOpencodeRunning(): Promise<boolean> {
+  const port = await getOpencodePort()
+  if (!port) return false
   try {
-    const res = await fetch(`${OPENCODE_HOST}:${OPENCODE_PORT}/global/health`)
+    const res = await fetch(`${OPENCODE_HOST}:${port}/global/health`)
     return res.ok
   } catch {
+    // Port discovery succeeded but connection failed - reset cache
+    cachedPort = null
     return false
   }
 }
@@ -45,8 +61,14 @@ async function getSessionStatus(client: any, sessionId: string): Promise<string 
 async function executeTask(task: ScheduledTask): Promise<void> {
   console.log(`[daemon] Executing task: ${task.id} - "${task.prompt.slice(0, 50)}..."`)
   
+  const port = await getOpencodePort()
+  if (!port) {
+    console.log(`[daemon] Cannot discover OpenCode port, skipping task`)
+    return
+  }
+  
   const client = createOpencodeClient({ 
-    baseUrl: `${OPENCODE_HOST}:${OPENCODE_PORT}` 
+    baseUrl: `${OPENCODE_HOST}:${port}` 
   })
 
   // If no sessionId, try to get the most recent session
@@ -63,7 +85,7 @@ async function executeTask(task: ScheduledTask): Promise<void> {
       } else {
         console.log(`[daemon] No sessions found, creating new session`)
         const newSession = await client.session.create({ body: { title: "Scheduled Task" } })
-        sessionId = newSession.data.id
+        sessionId = newSession.data!.id
         await updateTask(task.id, { sessionId })
       }
     } catch (err) {
@@ -91,7 +113,7 @@ async function executeTask(task: ScheduledTask): Promise<void> {
     const fork = await client.session.fork({ 
       path: { id: sessionId } 
     })
-    const forkId = fork.data.id
+    const forkId = fork.data!.id
     console.log(`[daemon] Created fork: ${forkId}`)
 
     // Store fork ID for the plugin to track
@@ -238,7 +260,7 @@ async function runLoop(): Promise<void> {
 // Main
 console.log("[daemon] OpenCode Reminders Daemon starting...")
 console.log(`[daemon] Schedule file: ~/.config/opencode/reminders.json`)
-console.log(`[daemon] OpenCode endpoint: ${OPENCODE_HOST}:${OPENCODE_PORT}`)
+console.log(`[daemon] OpenCode endpoint: auto-discover via lsof`)
 
 if (ONCE_MODE) {
   runOnce().then(() => process.exit(0)).catch((err) => {
