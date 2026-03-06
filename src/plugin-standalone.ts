@@ -30,6 +30,7 @@ interface Schedule {
 }
 
 const SCHEDULE_PATH = `${process.env.HOME}/.config/opencode/reminders.json`
+const PORT_FILE = `${process.env.HOME}/.config/opencode/reminders-port`
 
 // ============ Schedule Operations ============
 const DEFAULT_SCHEDULE: Schedule = { tasks: [], version: 1 }
@@ -109,14 +110,39 @@ function getNextTriggerTime(recurrence: string): number {
   throw new Error(`Invalid recurrence format: ${recurrence}`)
 }
 
+// ============ Port Discovery ============
+async function discoverAndWritePort(): Promise<void> {
+  try {
+    // Find opencode's listening port via lsof
+    const proc = Bun.spawn(["/usr/sbin/lsof", "-c", "opencode", "-i", "-sTCP:LISTEN", "-nP"], {
+      stdout: "pipe",
+      stderr: "ignore",
+    })
+    const output = await new Response(proc.stdout).text()
+    
+    for (const line of output.split("\n")) {
+      if (line.includes("opencode") && line.includes("LISTEN")) {
+        const match = line.match(/:(\d+)\s+\(LISTEN\)/)
+        if (match) {
+          const port = match[1]
+          await Bun.write(PORT_FILE, port)
+          return
+        }
+      }
+    }
+  } catch (err) {
+  }
+}
+
 // ============ Plugin ============
 export const RemindersPlugin: Plugin = async ({ client }) => {
-  console.log("[reminders] Plugin loaded")
+
+  // Write port file so daemon can find us
+  await discoverAndWritePort()
 
   // Reset any orphaned running tasks
   const running = await getRunningTasks()
   for (const task of running) {
-    console.log(`[reminders] Found orphaned running task: ${task.id}, marking as pending`)
     await updateTask(task.id, { status: "pending", forkSessionId: undefined })
   }
 
@@ -253,13 +279,10 @@ ${task.recurrence ? `## Note: Recurring task (${task.recurrence}) - next occurre
         priority: task.priority,
         recurrence: task.recurrence,
       })
-      console.log(`[reminders] Scheduled next: ${new Date(nextTrigger).toISOString()}`)
     }
 
     await updateTask(task.id, { status: "completed" })
-    console.log(`[reminders] Task ${task.id} completed`)
   } catch (err) {
-    console.error(`[reminders] Error:`, err)
     await updateTask(task.id, { status: "failed", lastError: String(err) })
   }
 }

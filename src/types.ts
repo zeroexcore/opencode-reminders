@@ -21,10 +21,24 @@ export interface Schedule {
 }
 
 export const SCHEDULE_PATH = `${process.env.HOME}/.config/opencode/reminders.json`
+export const PORT_FILE = `${process.env.HOME}/.config/opencode/reminders-port`
 export const OPENCODE_HOST = "http://127.0.0.1"
 
-// Port discovery - find which port opencode is listening on
+// Port discovery - try port file first (written by plugin), fall back to lsof
 export async function discoverOpencodePort(): Promise<number | null> {
+  // 1. Try reading port file (fastest, written by plugin)
+  try {
+    const portFile = Bun.file(PORT_FILE)
+    if (await portFile.exists()) {
+      const content = await portFile.text()
+      const port = parseInt(content.trim(), 10)
+      if (!isNaN(port) && port > 0) {
+        return port
+      }
+    }
+  } catch {}
+
+  // 2. Fall back to lsof discovery
   try {
     const proc = Bun.spawn(["/usr/sbin/lsof", "-c", "opencode", "-i", "-sTCP:LISTEN", "-nP"], {
       stdout: "pipe",
