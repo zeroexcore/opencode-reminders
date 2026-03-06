@@ -120,21 +120,9 @@ export const RemindersPlugin: Plugin = async ({ client }) => {
   }
 
   return {
-    // Monitor forked sessions for completion
-    event: async ({ event }) => {
-      if (event.type === "session.idle") {
-        const idleSessionId = event.properties.sessionID
-        const schedule = await readSchedule()
-        const runningTask = schedule.tasks.find(
-          (t) => t.status === "running" && t.forkSessionId === idleSessionId
-        )
-
-        if (runningTask) {
-          console.log(`[reminders] Forked session completed for task: ${runningTask.id}`)
-          await handleForkCompletion(client, runningTask, idleSessionId)
-        }
-      }
-    },
+    // NOTE: Fork completion is handled by the daemon, not here.
+    // The daemon waits for the fork to complete and injects the summary.
+    // We only provide the tools here.
 
     tool: {
       remind: tool({
