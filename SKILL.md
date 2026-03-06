@@ -35,10 +35,17 @@ Settings: `priority: "normal"`, `silent: true`
 
 ### Silent = Whether agent responds
 
-| Mode | Behavior | Who uses it |
-|------|----------|-------------|
-| `silent: false` (default) | Agent sees result, responds naturally | Human reminders - user expects acknowledgment |
-| `silent: true` | Inject into context, no forced response | Agent tasks - info gathering, may or may not mention |
+| Mode | Behavior | Use case |
+|------|----------|----------|
+| `silent: false` (default) | Agent responds to result | Need to communicate/act on result |
+| `silent: true` | Inject into context only | Just want info available, decide later |
+
+**Key insight**: `silent` isn't human vs agent. It's about whether the task result needs a response.
+
+Agent tasks often want `silent: false` to paste context back and act on it:
+- "Fetch latest prices and update the user" → needs response
+- "Research X and summarize findings" → needs response
+- "Check build status" → just info, might mention if failed
 
 ### Common Patterns
 
@@ -53,16 +60,35 @@ Settings: `priority: "normal"`, `silent: true`
 → priority: critical, silent: false
 → Agent: "Here's something cool: [presents fact naturally]"
 
-# Agent background check - wait + silent
-"check my portfolio hourly"
-→ priority: normal, silent: true
-→ Agent sees data, mentions only if noteworthy
+# Agent task needing response - wait + respond
+"fetch market data and brief me when idle"
+→ priority: normal, silent: false
+→ Agent: "Quick market update: BTC up 3%, ETH flat..."
 
-# Agent todo - wait + silent
-"remind me to review this PR when idle"
+# Agent research task - wait + respond
+"research this error and report back"
+→ priority: normal, silent: false  
+→ Agent: "Found the issue - it's a known bug in v2.3..."
+
+# Agent passive monitoring - wait + silent
+"check build status periodically"
 → priority: normal, silent: true
-→ Agent picks it up when user stops typing
+→ Agent sees status, only speaks up if failed
+
+# Agent context gathering - wait + silent
+"load project README into context"
+→ priority: normal, silent: true
+→ Info available, no response needed
 ```
+
+### Decision Matrix
+
+| Need to tell user? | Time sensitive? | Settings |
+|--------------------|-----------------|----------|
+| Yes | Yes | `critical`, `silent: false` |
+| Yes | No | `normal`, `silent: false` |
+| Maybe | No | `normal`, `silent: true` |
+| No (just context) | No | `normal`, `silent: true` |
 
 ## Core Concepts
 
