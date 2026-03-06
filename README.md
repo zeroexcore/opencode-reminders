@@ -56,14 +56,14 @@ remind({
 })
 ```
 
-### List tasks
+### List reminders
 ```
-schedule_list()
+list_reminders()
 ```
 
 ### Cancel
 ```
-schedule_cancel({ id: "abc12345" })
+cancel_reminder({ id: "abc12345" })
 ```
 
 ## Priority

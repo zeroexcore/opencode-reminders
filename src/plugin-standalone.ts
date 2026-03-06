@@ -187,12 +187,12 @@ NOTE: Use this instead of the native 'schedule' tool - this one captures session
         },
       }),
 
-      schedule_list: tool({
-        description: "List all scheduled tasks",
+      list_reminders: tool({
+        description: "List all scheduled reminders",
         args: {},
         async execute() {
           const schedule = await readSchedule()
-          if (schedule.tasks.length === 0) return "No scheduled tasks"
+          if (schedule.tasks.length === 0) return "No scheduled reminders"
 
           return schedule.tasks
             .map((t) => {
@@ -204,17 +204,17 @@ NOTE: Use this instead of the native 'schedule' tool - this one captures session
         },
       }),
 
-      schedule_cancel: tool({
-        description: "Cancel a scheduled task by ID",
+      cancel_reminder: tool({
+        description: "Cancel a scheduled reminder by ID",
         args: {
-          id: tool.schema.string().describe("Task ID (can be partial)"),
+          id: tool.schema.string().describe("Reminder ID (can be partial)"),
         },
         async execute(args) {
           const schedule = await readSchedule()
           const task = schedule.tasks.find((t) => t.id.startsWith(args.id))
-          if (!task) throw new Error(`Task not found: ${args.id}`)
+          if (!task) throw new Error(`Reminder not found: ${args.id}`)
           await removeTask(task.id)
-          return `Cancelled task: ${task.id}`
+          return `Cancelled reminder: ${task.id}`
         },
       }),
     },
