@@ -36,12 +36,16 @@ async function getOpencodePort(): Promise<number | null> {
 
 async function isOpencodeRunning(): Promise<boolean> {
   const port = await getOpencodePort()
-  if (!port) return false
+  if (!port) {
+    console.log(`[daemon] Port discovery returned null`)
+    return false
+  }
   try {
     const res = await fetch(`${OPENCODE_HOST}:${port}/global/health`)
     return res.ok
-  } catch {
+  } catch (err) {
     // Port discovery succeeded but connection failed - reset cache
+    console.log(`[daemon] Connection to port ${port} failed:`, err)
     cachedPort = null
     return false
   }

@@ -86,8 +86,10 @@ async function main() {
   const templatePath = `${PROJECT_DIR}/com.oxc.opencode-reminders.plist.template`
   const daemonPath = `${OPENCODE_CONFIG}/plugins/daemon.ts`
   
-  // Copy daemon to plugins dir so it's in a stable location
+  // Copy daemon and its dependencies to plugins dir
   await $`cp ${PROJECT_DIR}/src/daemon.ts ${daemonPath}`
+  await $`cp ${PROJECT_DIR}/src/types.ts ${OPENCODE_CONFIG}/plugins/types.ts`
+  await $`cp ${PROJECT_DIR}/src/schedule.ts ${OPENCODE_CONFIG}/plugins/schedule.ts`
   
   let plistContent = await Bun.file(templatePath).text()
   plistContent = plistContent

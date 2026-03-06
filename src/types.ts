@@ -26,7 +26,7 @@ export const OPENCODE_HOST = "http://127.0.0.1"
 // Port discovery - find which port opencode is listening on
 export async function discoverOpencodePort(): Promise<number | null> {
   try {
-    const proc = Bun.spawn(["lsof", "-c", "opencode", "-i", "-sTCP:LISTEN", "-nP"], {
+    const proc = Bun.spawn(["/usr/sbin/lsof", "-c", "opencode", "-i", "-sTCP:LISTEN", "-nP"], {
       stdout: "pipe",
       stderr: "ignore",
     })
