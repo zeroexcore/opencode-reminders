@@ -3,17 +3,48 @@
  * Install script for OpenCode Reminders
  * 
  * Copies plugin to ~/.config/opencode/plugins/
- * Installs LaunchAgent for background daemon
+ * Installs LaunchAgent for background daemon (generates plist from template)
  */
 import { $ } from "bun"
+import { dirname, resolve } from "path"
 
 const HOME = process.env.HOME!
-const PROJECT_DIR = `${HOME}/code/oxc/reminders`
+const SCRIPT_DIR = dirname(Bun.main)
+const PROJECT_DIR = resolve(SCRIPT_DIR, "..")
 const OPENCODE_CONFIG = `${HOME}/.config/opencode`
 const LAUNCH_AGENTS = `${HOME}/Library/LaunchAgents`
 
+// Find bun binary
+async function findBun(): Promise<string> {
+  // Check common locations
+  const candidates = [
+    `${HOME}/.bun/bin/bun`,
+    "/usr/local/bin/bun",
+    "/opt/homebrew/bin/bun",
+  ]
+  
+  for (const path of candidates) {
+    if (await Bun.file(path).exists()) return path
+  }
+  
+  // Try which
+  try {
+    const result = await $`which bun`.text()
+    return result.trim()
+  } catch {}
+  
+  throw new Error("Could not find bun binary")
+}
+
 async function main() {
   console.log("Installing OpenCode Reminders...\n")
+  console.log(`Project dir: ${PROJECT_DIR}`)
+  console.log(`Config dir: ${OPENCODE_CONFIG}\n`)
+
+  // Find bun path
+  const bunPath = await findBun()
+  const bunBin = dirname(bunPath)
+  console.log(`Found bun: ${bunPath}\n`)
 
   // 1. Create directories
   console.log("1. Creating directories...")
@@ -50,11 +81,23 @@ async function main() {
     await $`rm -f ${LAUNCH_AGENTS}/com.rusintez.opencode-reminders.plist`.quiet()
   } catch {}
 
-  // 6. Install new LaunchAgent
-  console.log("6. Installing LaunchAgent...")
-  const plistSrc = `${PROJECT_DIR}/com.oxc.opencode-reminders.plist`
+  // 6. Generate plist from template
+  console.log("6. Generating LaunchAgent plist...")
+  const templatePath = `${PROJECT_DIR}/com.oxc.opencode-reminders.plist.template`
+  const daemonPath = `${OPENCODE_CONFIG}/plugins/daemon.ts`
+  
+  // Copy daemon to plugins dir so it's in a stable location
+  await $`cp ${PROJECT_DIR}/src/daemon.ts ${daemonPath}`
+  
+  let plistContent = await Bun.file(templatePath).text()
+  plistContent = plistContent
+    .replace(/\{\{BUN_PATH\}\}/g, bunPath)
+    .replace(/\{\{BUN_BIN\}\}/g, bunBin)
+    .replace(/\{\{DAEMON_PATH\}\}/g, daemonPath)
+    .replace(/\{\{HOME\}\}/g, HOME)
+  
   const plistDst = `${LAUNCH_AGENTS}/com.oxc.opencode-reminders.plist`
-  await $`cp ${plistSrc} ${plistDst}`
+  await Bun.write(plistDst, plistContent)
 
   // 7. Unload if already loaded, then load
   console.log("7. Loading LaunchAgent...")

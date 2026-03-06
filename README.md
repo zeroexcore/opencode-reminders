@@ -34,7 +34,8 @@ bun run install:plugin
 
 This:
 - Copies plugin to `~/.config/opencode/plugins/`
-- Installs LaunchAgent for background daemon
+- Copies daemon to `~/.config/opencode/plugins/daemon.ts`
+- Generates LaunchAgent plist from template (auto-detects paths)
 - Starts the daemon
 
 Restart OpenCode after install.
@@ -100,6 +101,9 @@ launchctl load ~/Library/LaunchAgents/com.oxc.opencode-reminders.plist
 ```bash
 # OpenCode running?
 curl http://localhost:4096/global/health
+
+# Quick check if port is in use
+lsof -i :4096 -sTCP:LISTEN >/dev/null 2>&1 && echo "running" || echo "not running"
 
 # Schedule file
 cat ~/.config/opencode/reminders.json

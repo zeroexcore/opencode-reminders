@@ -7,9 +7,9 @@
     
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/runcible/.bun/bin/bun</string>
+        <string>{{BUN_PATH}}</string>
         <string>run</string>
-        <string>/Users/runcible/code/oxc/reminders/src/daemon.ts</string>
+        <string>{{DAEMON_PATH}}</string>
     </array>
     
     <key>RunAtLoad</key>
@@ -27,9 +27,9 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/Users/runcible/.bun/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <string>{{BUN_BIN}}:/usr/local/bin:/usr/bin:/bin</string>
         <key>HOME</key>
-        <string>/Users/runcible</string>
+        <string>{{HOME}}</string>
     </dict>
 </dict>
 </plist>
