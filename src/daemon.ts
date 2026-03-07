@@ -15,12 +15,21 @@ import {
   updateTask, 
   addTask,
   getNextTriggerTime,
-  readSchedule 
+  readSchedule,
+  blockSession
 } from "./schedule"
 import { OPENCODE_HOST, discoverOpencodePort, type ScheduledTask } from "./types"
 
 const POLL_INTERVAL = 30_000 // 30 seconds
 const ONCE_MODE = process.argv.includes("--once")
+const LOG_FILE = "/tmp/opencode-reminders.log"
+
+// Simple file-based logging (doesn't interfere with TUI)
+import { appendFileSync } from "fs"
+function log(msg: string) {
+  const line = `[${new Date().toISOString()}] ${msg}\n`
+  appendFileSync(LOG_FILE, line)
+}
 
 // Cache discovered port (won't change during daemon lifetime)
 let cachedPort: number | null = null
@@ -60,6 +69,7 @@ async function getSessionStatus(client: any, sessionId: string): Promise<string 
 }
 
 async function executeTask(task: ScheduledTask): Promise<void> {
+  log(`Executing task: ${task.id} - "${task.prompt.slice(0, 50)}..."`)
   
   const port = await getOpencodePort()
   if (!port) {
@@ -70,24 +80,39 @@ async function executeTask(task: ScheduledTask): Promise<void> {
     baseUrl: `${OPENCODE_HOST}:${port}` 
   })
 
-  // If no sessionId, try to get the most recent session
+  // Get/validate session ID
+  // Note: Plugin may capture wrong sessionId (fork instead of main) due to context bug
+  // Forks have "(fork" in title - we need to find a non-fork session
   let sessionId = task.sessionId
-  if (!sessionId) {
-    try {
-      const sessions = await client.session.list()
-      if (sessions.data && sessions.data.length > 0) {
-        // Get most recent session (they should be sorted)
+  try {
+    const sessions = await client.session.list()
+    
+    // Check if stored session is a fork (has "fork" in title)
+    const storedSession = sessions.data?.find(s => s.id === sessionId)
+    const isFork = storedSession?.title?.includes("(fork")
+    
+    if (!storedSession || isFork) {
+      // Need to find a non-fork session
+      const mainSession = sessions.data?.find(s => !s.title?.includes("(fork"))
+      if (mainSession) {
+        sessionId = mainSession.id
+        await log(`Using main session ${sessionId} instead of ${task.sessionId}${isFork ? " (was fork)" : " (not found)"}`)
+        await updateTask(task.id, { sessionId })
+      } else if (sessions.data && sessions.data.length > 0) {
+        // No non-fork session, use first available
         sessionId = sessions.data[0].id
+        await log(`No main session found, using ${sessionId}`)
         await updateTask(task.id, { sessionId })
       } else {
+        // No sessions at all, create one
         const newSession = await client.session.create({ body: { title: "Scheduled Task" } })
         sessionId = newSession.data!.id
         await updateTask(task.id, { sessionId })
       }
-    } catch (err) {
-      await updateTask(task.id, { status: "failed", lastError: "Could not get or create session" })
-      return
     }
+  } catch (err) {
+    await updateTask(task.id, { status: "failed", lastError: "Could not validate session" })
+    return
   }
 
   // Check if main session is busy
@@ -103,13 +128,18 @@ async function executeTask(task: ScheduledTask): Promise<void> {
 
   try {
     // Fork the main session
+    log(`Forking session ${sessionId}`)
     const fork = await client.session.fork({ 
       path: { id: sessionId } 
     })
     const forkId = fork.data!.id
+    log(`Created fork: ${forkId}`)
 
-    // Store fork ID for the plugin to track
+    // Store fork ID and block this session from creating new reminders
     await updateTask(task.id, { forkSessionId: forkId })
+    await log(`Blocking session ${forkId}...`)
+    await blockSession(forkId)
+    await log(`Session ${forkId} blocked successfully`)
 
     // Send the task prompt to the forked session
     // Using prompt (not promptAsync) so we wait for completion
@@ -123,14 +153,20 @@ async function executeTask(task: ScheduledTask): Promise<void> {
       }
     })
 
-    
+    log(`Fork completed, extracting summary...`)
     // Extract summary from response
     const summary = extractSummary(result.data)
+
+    // NOTE: We removed the "check if task still exists" logic here.
+    // Previously, zombie sessions could overwrite the file during fork execution,
+    // causing legitimate tasks to appear "cancelled". Now we always inject.
+    // Actual user cancellation should kill the fork session instead.
 
     // Join back to main session
     // silent=true -> noReply (background task, just inject info)
     // silent=false -> let agent respond (user-facing task)
     const shouldBeQuiet = task.silent ?? false
+    log(`Joining back to main session (silent=${shouldBeQuiet})`)
     await client.session.prompt({
       path: { id: task.sessionId },
       body: {
@@ -142,21 +178,20 @@ async function executeTask(task: ScheduledTask): Promise<void> {
       }
     })
 
-    // Handle recurrence
+    // Handle recurrence - reschedule SAME task instead of creating new one
     if (task.recurrence) {
       const nextTrigger = getNextTriggerTime(task.recurrence)
-      await addTask({
-        sessionId: task.sessionId,
+      log(`Recurring task - same ID ${task.id}, next trigger: ${new Date(nextTrigger).toISOString()}`)
+      await updateTask(task.id, { 
+        status: "pending", 
         triggerAt: nextTrigger,
-        prompt: task.prompt,
-        priority: task.priority,
-        recurrence: task.recurrence,
-        silent: task.silent,
+        forkSessionId: undefined 
       })
+    } else {
+      // Mark completed only for non-recurring tasks
+      log(`Task ${task.id} completed`)
+      await updateTask(task.id, { status: "completed" })
     }
-
-    // Mark completed
-    await updateTask(task.id, { status: "completed" })
 
     // Show toast notification
     try {
@@ -171,9 +206,11 @@ async function executeTask(task: ScheduledTask): Promise<void> {
     }
 
   } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err)
+    log(`Task ${task.id} failed: ${errMsg}`)
     await updateTask(task.id, { 
       status: "failed", 
-      lastError: err instanceof Error ? err.message : String(err)
+      lastError: errMsg
     })
   }
 }
@@ -185,10 +222,14 @@ function buildTaskPrompt(task: ScheduledTask): string {
 ${task.prompt}
 
 ---
-Instructions:
-1. Execute the task above completely
-2. Provide a clear summary of what was done and any results
-${task.recurrence ? `3. Note: This is a recurring task (${task.recurrence}). Next occurrence will be scheduled automatically.` : ''}
+## CRITICAL INSTRUCTIONS - READ CAREFULLY:
+1. EXECUTE the task above and provide a brief summary
+2. DO NOT call the remind tool - scheduling is handled automatically by the system
+3. DO NOT call list_reminders or cancel_reminder
+4. DO NOT try to reschedule or create any new reminders
+5. Just respond with the task result, nothing more
+
+If you call any reminder-related tools, the system will break. Simply execute the task and respond.
 </scheduled_task>`
 }
 
@@ -219,12 +260,14 @@ function extractSummary(data: any): string {
 }
 
 async function runOnce(): Promise<void> {
-  
+  log(`[daemon] Poll cycle starting...`)
   if (!(await isOpencodeRunning())) {
+    log(`[daemon] OpenCode not running, skipping`)
     return
   }
 
   const dueTasks = await getDueTasks()
+  log(`[daemon] Found ${dueTasks.length} due tasks`)
 
   for (const task of dueTasks) {
     await executeTask(task)

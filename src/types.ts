@@ -17,6 +17,7 @@ export interface ScheduledTask {
 
 export interface Schedule {
   tasks: ScheduledTask[]
+  blockedSessions?: string[] // Sessions that have been used as forks - permanently blocked
   version: number
 }
 

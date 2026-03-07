@@ -1,10 +1,13 @@
 /**
- * Reminders Plugin for OpenCode (Standalone version)
+ * Reminders Plugin for OpenCode
  * 
- * This file is self-contained and gets copied to ~/.config/opencode/plugins/
+ * Self-contained plugin using Node.js APIs (no Bun dependencies)
+ * The daemon (daemon.ts) runs under Bun and handles task execution.
  */
 import type { Plugin } from "@opencode-ai/plugin"
 import { tool } from "@opencode-ai/plugin"
+import { readFileSync, writeFileSync, existsSync } from "fs"
+import { execSync } from "child_process"
 
 // ============ Types ============
 type Priority = "normal" | "critical"
@@ -18,7 +21,7 @@ interface ScheduledTask {
   prompt: string
   priority: Priority
   recurrence?: string
-  silent?: boolean // true = inject without response, false = let agent respond
+  silent?: boolean
   status: TaskStatus
   lastError?: string
   forkSessionId?: string
@@ -26,62 +29,113 @@ interface ScheduledTask {
 
 interface Schedule {
   tasks: ScheduledTask[]
+  blockedSessions?: string[]
   version: number
 }
 
 const SCHEDULE_PATH = `${process.env.HOME}/.config/opencode/reminders.json`
 const PORT_FILE = `${process.env.HOME}/.config/opencode/reminders-port`
+const LOCK_PATH = SCHEDULE_PATH + ".lock"
+const DEFAULT_SCHEDULE: Schedule = { tasks: [], blockedSessions: [], version: 1 }
+
+// ============ Simple File Locking ============
+function acquireLock(): void {
+  const start = Date.now()
+  while (Date.now() - start < 5000) {
+    try {
+      if (existsSync(LOCK_PATH)) {
+        const lockTime = parseInt(readFileSync(LOCK_PATH, "utf8"))
+        if (Date.now() - lockTime > 5000) {
+          // Stale lock
+          writeFileSync(LOCK_PATH, String(Date.now()))
+          return
+        }
+        // Wait
+        const waitUntil = Date.now() + 50
+        while (Date.now() < waitUntil) {} // Busy wait (sync)
+        continue
+      }
+      writeFileSync(LOCK_PATH, String(Date.now()))
+      return
+    } catch {
+      const waitUntil = Date.now() + 50
+      while (Date.now() < waitUntil) {}
+    }
+  }
+  // Timeout - proceed anyway
+}
+
+function releaseLock(): void {
+  try {
+    const fs = require("fs")
+    fs.unlinkSync(LOCK_PATH)
+  } catch {}
+}
 
 // ============ Schedule Operations ============
-const DEFAULT_SCHEDULE: Schedule = { tasks: [], version: 1 }
-
-async function readSchedule(): Promise<Schedule> {
-  try {
-    const file = Bun.file(SCHEDULE_PATH)
-    if (!(await file.exists())) return DEFAULT_SCHEDULE
-    return await file.json()
-  } catch {
+function readSchedule(): Schedule {
+  if (!existsSync(SCHEDULE_PATH)) {
+    writeFileSync(SCHEDULE_PATH, JSON.stringify(DEFAULT_SCHEDULE, null, 2))
     return DEFAULT_SCHEDULE
   }
-}
-
-async function writeSchedule(schedule: Schedule): Promise<void> {
-  await Bun.write(SCHEDULE_PATH, JSON.stringify(schedule, null, 2))
-}
-
-async function addTask(task: Omit<ScheduledTask, "id" | "createdAt" | "status">): Promise<ScheduledTask> {
-  const schedule = await readSchedule()
-  const newTask: ScheduledTask = {
-    ...task,
-    id: crypto.randomUUID(),
-    createdAt: Date.now(),
-    status: "pending",
+  
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const content = readFileSync(SCHEDULE_PATH, "utf8")
+      const parsed = JSON.parse(content) as Schedule
+      if (!Array.isArray(parsed.tasks)) parsed.tasks = []
+      if (!Array.isArray(parsed.blockedSessions)) parsed.blockedSessions = []
+      return parsed
+    } catch {
+      const waitUntil = Date.now() + 50
+      while (Date.now() < waitUntil) {}
+    }
   }
-  schedule.tasks.push(newTask)
-  await writeSchedule(schedule)
-  return newTask
+  throw new Error("Failed to read schedule after 3 attempts")
 }
 
-async function updateTask(id: string, updates: Partial<ScheduledTask>): Promise<void> {
-  const schedule = await readSchedule()
-  const idx = schedule.tasks.findIndex((t) => t.id === id)
-  if (idx !== -1) {
-    schedule.tasks[idx] = { ...schedule.tasks[idx], ...updates }
-    await writeSchedule(schedule)
+function writeSchedule(schedule: Schedule): void {
+  writeFileSync(SCHEDULE_PATH, JSON.stringify(schedule, null, 2))
+}
+
+function addTask(task: Omit<ScheduledTask, "id" | "createdAt" | "status">): ScheduledTask {
+  acquireLock()
+  try {
+    const schedule = readSchedule()
+    
+    // Block tasks from fork sessions
+    const isBlockedSession = schedule.blockedSessions?.includes(task.sessionId)
+    const isActiveFork = schedule.tasks.some(t => t.forkSessionId === task.sessionId)
+    if (isBlockedSession || isActiveFork) {
+      throw new Error("Cannot create reminders from fork sessions")
+    }
+    
+    const newTask: ScheduledTask = {
+      ...task,
+      id: crypto.randomUUID(),
+      createdAt: Date.now(),
+      status: "pending",
+    }
+    schedule.tasks.push(newTask)
+    writeSchedule(schedule)
+    return newTask
+  } finally {
+    releaseLock()
   }
 }
 
-async function removeTask(id: string): Promise<void> {
-  const schedule = await readSchedule()
-  schedule.tasks = schedule.tasks.filter((t) => t.id !== id)
-  await writeSchedule(schedule)
+function removeTask(id: string): void {
+  acquireLock()
+  try {
+    const schedule = readSchedule()
+    schedule.tasks = schedule.tasks.filter(t => t.id !== id)
+    writeSchedule(schedule)
+  } finally {
+    releaseLock()
+  }
 }
 
-async function getRunningTasks(): Promise<ScheduledTask[]> {
-  const schedule = await readSchedule()
-  return schedule.tasks.filter((t) => t.status === "running")
-}
-
+// ============ Delay/Recurrence Parsing ============
 function parseDelay(delay: string): number {
   const match = delay.match(/^(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/)
   if (!match) throw new Error(`Invalid delay format: ${delay}`)
@@ -111,46 +165,30 @@ function getNextTriggerTime(recurrence: string): number {
 }
 
 // ============ Port Discovery ============
-async function discoverAndWritePort(): Promise<void> {
+function discoverAndWritePort(): void {
   try {
-    // Find opencode's listening port via lsof
-    const proc = Bun.spawn(["/usr/sbin/lsof", "-c", "opencode", "-i", "-sTCP:LISTEN", "-nP"], {
-      stdout: "pipe",
-      stderr: "ignore",
-    })
-    const output = await new Response(proc.stdout).text()
-    
+    const output = execSync(
+      '/usr/sbin/lsof -c opencode -i -sTCP:LISTEN -nP 2>/dev/null || true',
+      { encoding: 'utf8' }
+    )
     for (const line of output.split("\n")) {
       if (line.includes("opencode") && line.includes("LISTEN")) {
         const match = line.match(/:(\d+)\s+\(LISTEN\)/)
         if (match) {
-          const port = match[1]
-          await Bun.write(PORT_FILE, port)
+          writeFileSync(PORT_FILE, match[1])
           return
         }
       }
     }
-  } catch (err) {
-  }
+  } catch {}
 }
 
 // ============ Plugin ============
 export const RemindersPlugin: Plugin = async ({ client }) => {
-
-  // Write port file so daemon can find us
-  await discoverAndWritePort()
-
-  // Reset any orphaned running tasks
-  const running = await getRunningTasks()
-  for (const task of running) {
-    await updateTask(task.id, { status: "pending", forkSessionId: undefined })
-  }
+  // Write port file for daemon
+  discoverAndWritePort()
 
   return {
-    // NOTE: Fork completion is handled by the daemon, not here.
-    // The daemon waits for the fork to complete and injects the summary.
-    // We only provide the tools here.
-
     tool: {
       remind: tool({
         description: `Schedule a future task for yourself (the agent). Use this to:
@@ -177,6 +215,14 @@ NOTE: Use this instead of the native 'schedule' tool - this one captures session
         async execute(args, context) {
           const { delay, prompt, priority, recurrence, silent } = args
 
+          // Check if this session is blocked (is a fork)
+          const schedule = readSchedule()
+          const isForkSession = schedule.tasks.some(t => t.forkSessionId === context.sessionID)
+          const isBlockedSession = schedule.blockedSessions?.includes(context.sessionID)
+          if (isForkSession || isBlockedSession) {
+            return "Cannot schedule reminders from a fork session. Complete the current task without scheduling."
+          }
+
           if (!delay && !recurrence) {
             throw new Error("Either delay or recurrence is required")
           }
@@ -188,7 +234,7 @@ NOTE: Use this instead of the native 'schedule' tool - this one captures session
             triggerAt = Date.now() + parseDelay(delay!)
           }
 
-          const task = await addTask({
+          const task = addTask({
             sessionId: context.sessionID,
             triggerAt,
             prompt,
@@ -211,7 +257,7 @@ NOTE: Use this instead of the native 'schedule' tool - this one captures session
         description: "List all scheduled reminders",
         args: {},
         async execute() {
-          const schedule = await readSchedule()
+          const schedule = readSchedule()
           if (schedule.tasks.length === 0) return "No scheduled reminders"
 
           return schedule.tasks
@@ -230,60 +276,14 @@ NOTE: Use this instead of the native 'schedule' tool - this one captures session
           id: tool.schema.string().describe("Reminder ID (can be partial)"),
         },
         async execute(args) {
-          const schedule = await readSchedule()
+          const schedule = readSchedule()
           const task = schedule.tasks.find((t) => t.id.startsWith(args.id))
           if (!task) throw new Error(`Reminder not found: ${args.id}`)
-          await removeTask(task.id)
+          removeTask(task.id)
           return `Cancelled reminder: ${task.id}`
         },
       }),
     },
-  }
-}
-
-async function handleForkCompletion(client: any, task: ScheduledTask, forkSessionId: string): Promise<void> {
-  try {
-    const messages = await client.session.messages({ path: { id: forkSessionId } })
-    const lastAssistant = [...messages.data].reverse().find((m: any) => m.info.role === "assistant")
-    
-    let summary = "Task completed (no response captured)"
-    if (lastAssistant) {
-      const textPart = lastAssistant.parts.find((p: any) => p.type === "text")
-      if (textPart) summary = textPart.text.slice(0, 2000)
-    }
-
-    await client.session.prompt({
-      path: { id: task.sessionId },
-      body: {
-        noReply: true,
-        parts: [{
-          type: "text",
-          text: `<scheduled_task_completed id="${task.id}" time="${new Date().toISOString()}">
-## Task: ${task.prompt}
-
-## Result:
-${summary}
-
-${task.recurrence ? `## Note: Recurring task (${task.recurrence}) - next occurrence scheduled.` : ''}
-</scheduled_task_completed>`
-        }]
-      }
-    })
-
-    if (task.recurrence) {
-      const nextTrigger = getNextTriggerTime(task.recurrence)
-      await addTask({
-        sessionId: task.sessionId,
-        triggerAt: nextTrigger,
-        prompt: task.prompt,
-        priority: task.priority,
-        recurrence: task.recurrence,
-      })
-    }
-
-    await updateTask(task.id, { status: "completed" })
-  } catch (err) {
-    await updateTask(task.id, { status: "failed", lastError: String(err) })
   }
 }
 
